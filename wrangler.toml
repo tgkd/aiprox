@@ -111,3 +111,6 @@ enabled = true
 # [[vectorize]]
 # binding = "MY_INDEX"
 # index_name = "my-index"
+
+[limits]
+cpu_ms = 1000
