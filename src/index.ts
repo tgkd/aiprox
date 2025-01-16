@@ -78,8 +78,8 @@ interface ImageGenerationResponse {
 }
 
 app.get("/ai/txt2img/:width/:height", async (c) => {
-    const width = Math.min(parseInt(c.req.param("width") ?? 512), 512);
-    const height = Math.min(parseInt(c.req.param("height") ?? 512), 512);
+    const width = Math.min(parseInt(c.req.param("width") ?? 512), 1400);
+    const height = Math.min(parseInt(c.req.param("height") ?? 512), 1400);
     const prompt = c.req.query("prompt");
 
     if (!prompt) {
@@ -94,7 +94,7 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
         },
         body: JSON.stringify({
             model: "stability-ai/sdxl",
-            prompt,
+            prompt: IMG_SYS_PROMPT.replace("{{prompt}}", prompt),
             width,
             height,
             seed: -1,
@@ -109,7 +109,14 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
         throw new HTTPException(400, { message: await response.text() });
     }
 
-    return response.json();
+    // response example { "data": [ { "b64_json": "..." }, ], "id": "text2img-90862075-08b4-4de4-bb86-d3934fdf2ca1" }
+
+    const parsed = (await response.json()) as ImageGenerationResponse;
+    console.log(">>>", parsed?.id);
+
+    return parsed.data?.[0]?.b64_json
+        ? c.json({ data: parsed.data[0].b64_json })
+        : c.text("No data", 404);
 });
 
 // curl 'https://api.studio.nebius.ai/v1/images/generations' \
