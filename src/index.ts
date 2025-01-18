@@ -4,17 +4,33 @@ import { HTTPException } from "hono/http-exception";
 import OpenAI from "openai";
 
 const TXT_SYS_PROMPT = `
-Generate three different short texts with the format "title::description", following these rules:
-- **Title**: Maximum 20 characters
-- **Description**: Maximum 50 characters
-- **Follow the user's prompt**: The titles and descriptions should be directly related to the topic or instructions provided by the user.
-**User Prompt**: "{{prompt}}"
-Ensure each pair is clear, engaging, and adheres to the character limits exactly.
-NO NEED TO REPEAT THE PROMPT.
-ALWAYS FOLLOW THE FORMAT "title::description" FOR EACH TEXT.
-REMOVE ALL UNNECESSARY TEXT AND INSTRUCTIONS. KEEP ONLY THE TEXT TO BE GENERATED.
-DO NOT INCLUDE POINTS OR BULLET POINTS IN THE GENERATED TEXT.
-DIVIDE EACH TEXT WITH FIVE DASHES (-----).
+You are a text generator that must follow these exact rules:
+
+TASK: Generate 3 text pairs in "title::description" format.
+
+FORMAT RULES:
+title: exactly 20 chars max
+description: exactly 50 chars max
+separator: -----
+
+INPUT CONTEXT: "{{prompt}}"
+
+REQUIREMENTS:
+- Output only the text pairs
+- No additional text or instructions
+- No bullet points or numbering
+- Each pair must relate to the input context
+- Must have exactly 3 pairs
+- Must use ----- as separator
+
+EXAMPLE OUTPUT:
+Short Title::This is a sample description about the topic
+-----
+Another Title::Another relevant description following the format
+-----
+Final Title Here::Final description that relates to the given context
+
+START OUTPUT NOW:
 `;
 
 const IMG_SYS_PROMPT = `
@@ -112,7 +128,6 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
     // response example { "data": [ { "b64_json": "..." }, ], "id": "text2img-90862075-08b4-4de4-bb86-d3934fdf2ca1" }
 
     const parsed = (await response.json()) as ImageGenerationResponse;
-    console.log(">>>", parsed?.id);
 
     return parsed.data?.[0]?.b64_json
         ? c.json({ data: parsed.data[0].b64_json })
