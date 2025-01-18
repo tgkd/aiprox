@@ -6,12 +6,16 @@ import OpenAI from "openai";
 const TXT_SYS_PROMPT = `
 You are a text generator that must follow these exact rules:
 
-TASK: Generate 3 text pairs in "title::description" format.
+TASK: Generate 10 text pairs in "title::description" format.
 
 FORMAT RULES:
-title: exactly 20 chars max
-description: exactly 50 chars max
+title: always aim for 20 chars max but show last word complete if longer
+description: always aim for 50 chars max but show last word complete if longer
 separator: -----
+
+TEXT HANDLING RULES:
+- Never truncate or omit any words
+- Preserve full meaning and context
 
 INPUT CONTEXT: "{{prompt}}"
 
@@ -20,7 +24,7 @@ REQUIREMENTS:
 - No additional text or instructions
 - No bullet points or numbering
 - Each pair must relate to the input context
-- Must have exactly 3 pairs
+- Must have exactly 10 pairs
 - Must use ----- as separator
 
 EXAMPLE OUTPUT:
