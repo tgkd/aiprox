@@ -72,21 +72,22 @@ app.get("/ai/txt2txt", async (c) => {
         },
     });
 
-    c.header("Content-Encoding", "Identity");
-    c.header("Cache-Control", "no-cache");
-    c.header("Connection", "keep-alive");
-    c.header("Content-Type", "text/event-stream");
+    // c.header("Content-Encoding", "Identity");
+    // c.header("Cache-Control", "no-cache");
+    // c.header("Connection", "keep-alive");
+    // c.header("Content-Type", "text/event-stream");
 
-    const chatStream = await openai.completions.create({
+    const response = await openai.completions.create({
         prompt: TXT_SYS_PROMPT.replace("{{prompt}}", prompt),
         model: "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        stream: true,
+        //model: "Qwen/Qwen2.5-Coder-32B-Instruct",
+        stream: false,
+        max_tokens: 512,
     });
 
-    return new Response(chatStream.toReadableStream(), {
-        headers: {
-            "content-type": "text/event-stream",
-        },
+    return c.json({
+        response: response.choices.map((c) => c.text).join(""),
+        created_at: response.created,
     });
 });
 
@@ -129,34 +130,12 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
         throw new HTTPException(400, { message: await response.text() });
     }
 
-    // response example { "data": [ { "b64_json": "..." }, ], "id": "text2img-90862075-08b4-4de4-bb86-d3934fdf2ca1" }
-
     const parsed = (await response.json()) as ImageGenerationResponse;
 
     return parsed.data?.[0]?.b64_json
         ? c.json({ data: parsed.data[0].b64_json })
         : c.text("No data", 404);
 });
-
-// curl 'https://api.studio.nebius.ai/v1/images/generations' \
-//   -H 'accept: */*' \
-//   -H 'accept-language: en-US,en;q=0.9,sr;q=0.8,ru;q=0.7' \
-//   -H 'authorization: Bearer ' \
-//   -H 'cache-control: no-cache' \
-//   -H 'content-type: application/json' \
-//   -H 'origin: https://studio.nebius.ai' \
-//   -H 'pragma: no-cache' \
-//   -H 'priority: u=1, i' \
-//   -H 'referer: https://studio.nebius.ai/' \
-//   -H 'sec-ch-ua: "Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"' \
-//   -H 'sec-ch-ua-mobile: ?0' \
-//   -H 'sec-ch-ua-platform: "macOS"' \
-//   -H 'sec-fetch-dest: empty' \
-//   -H 'sec-fetch-mode: cors' \
-//   -H 'sec-fetch-site: same-site' \
-//   -H 'user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' \
-//   --data-raw '{"model":"stability-ai/sdxl","prompt":"another one","width":1024,"height":1024,"seed":-1,"negative_prompt":"","num_inference_steps":50,"response_format":"b64_json","response_extension":"jpg"}'
-//
 
 app.onError((err, c) => {
     console.error(err);
