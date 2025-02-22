@@ -37,17 +37,22 @@ Final Title Here::Final description that relates to the given context
 START OUTPUT NOW:
 `;
 
-const IMG_SYS_PROMPT = `
-Generate an image based on the following prompt:
-{{prompt}}
-`;
+const IMG_PROMPT =
+    "{{prompt}}The main subject is centered with proper composition, illuminated by soft evenly diffused light. The image is clean without unnecessary details and noise, without distracting elements at the edges, featuring natural color reproduction and harmonious color palette. The overall mood of the photograph is positive and emotional.";
+
+const IMG_NEGATIVE_PROMPT =
+    "Blurriness, distortion, or inaccurate anatomy, busy or distracting backgrounds, unrealistic or overly saturated colors, signs of photo manipulation or artificial lighting. Bright highlights and overexposed areas, uneven exposure with deep shadows and high contrast. Distorted colors, overly bright and white objects. Noisy background with excessive detail and multiple distracting objects. Incorrect cropping, distorted proportions and complex angles. Text, letters and logos";
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
 
 app.use(
     "/ai/*",
     cors({
-        origin: ["https://mobile-textinput.smmake.pages.dev", "https://smmai.app"],
+        origin: [
+            "https://mobile-textinput.smmake.pages.dev",
+            "https://smmai.app",
+            "https://demo.smmake.pages.dev",
+        ],
         allowHeaders: ["Content-Type", "Authorization"],
         allowMethods: ["POST", "GET", "OPTIONS"],
         exposeHeaders: ["Content-Length", "Content-Type"],
@@ -79,8 +84,8 @@ app.get("/ai/txt2txt", async (c) => {
 
     const response = await openai.completions.create({
         prompt: TXT_SYS_PROMPT.replace("{{prompt}}", prompt),
-        model: "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        //model: "Qwen/Qwen2.5-Coder-32B-Instruct",
+        // model: "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        model: "Qwen/Qwen2.5-Coder-32B-Instruct",
         stream: false,
         max_tokens: 512,
     });
@@ -114,13 +119,13 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
             authorization: `Bearer ${c.env.AI_KEY}`,
         },
         body: JSON.stringify({
-            model: "stability-ai/sdxl",
-            prompt: IMG_SYS_PROMPT.replace("{{prompt}}", prompt),
+            model: "black-forest-labs/flux-schnell",
+            prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
             width,
             height,
             seed: -1,
-            negative_prompt: "",
-            num_inference_steps: 50,
+            negative_prompt: IMG_NEGATIVE_PROMPT,
+            num_inference_steps: 10,
             response_format: "b64_json",
             response_extension: "jpg",
         }),
