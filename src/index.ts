@@ -118,10 +118,12 @@ app.get("/ai/txt2txt", async (c) => {
     }
 
     if (moderationResult.flagged) {
-        return c.json({
-            response: "Your input was flagged as inappropriate by our moderation system.",
-            created_at: new Date().toISOString(),
-        });
+        return c.json(
+            {
+                error: "Your input was flagged as inappropriate by our moderation system.",
+            },
+            400
+        );
     }
 
     const response = await nebius.completions.create({
@@ -174,7 +176,12 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
     });
 
     if (!response.ok) {
-        throw new HTTPException(400, { message: await response.text() });
+        return c.json(
+            {
+                error: "Failed to generate image",
+            },
+            500
+        );
     }
 
     const parsed = (await response.json()) as ImageGenerationResponse;
@@ -200,10 +207,12 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
     }
 
     if (moderationResult.flagged) {
-        return c.json({
-            response: "Your input was flagged as inappropriate by our moderation system.",
-            created_at: new Date().toISOString(),
-        });
+        return c.json(
+            {
+                error: "Your input was flagged as inappropriate by our moderation system.",
+            },
+            400
+        );
     }
 
     return c.json({ data: b64 });
