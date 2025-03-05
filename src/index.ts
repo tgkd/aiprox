@@ -43,20 +43,54 @@ const IMG_PROMPT =
 const IMG_NEGATIVE_PROMPT =
     "Blurriness, distortion, or inaccurate anatomy, busy or distracting backgrounds, unrealistic or overly saturated colors, signs of photo manipulation or artificial lighting. Bright highlights and overexposed areas, uneven exposure with deep shadows and high contrast. Distorted colors, overly bright and white objects. Noisy background with excessive detail and multiple distracting objects. Incorrect cropping, distorted proportions and complex angles. Text, letters and logos";
 
+async function moderateContent(
+    content: string | Array<{ type: string; [key: string]: any }>,
+    apiKey: string
+): Promise<{ flagged: boolean; error?: string }> {
+    try {
+        const response = await fetch("https://api.openai.com/v1/moderations", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                input: content,
+                model: "omni-moderation-latest",
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Moderation API error: ${response.status}`, errorText);
+            return {
+                flagged: false,
+                error: `Moderation API error ${response.status}: ${errorText}`,
+            };
+        }
+
+        const result = await response.json<OpenAI.Moderations.ModerationCreateResponse>();
+        const flagged = result.results?.some((r: any) => r.flagged) || false;
+
+        return { flagged };
+    } catch (error) {
+        console.error("Moderation error:", error);
+        return {
+            flagged: false,
+            error: "Unknown moderation error",
+        };
+    }
+}
+
 const app = new Hono<{ Bindings: CloudflareBindings }>();
 
 app.use(
     "/ai/*",
     cors({
-        origin: [
-            "https://mobile-textinput.smmake.pages.dev",
-            "https://smmai.app",
-            "https://demo.smmake.pages.dev",
-        ],
+        origin: ["https://smmai.app", "https://demo.smmake.pages.dev"],
         allowHeaders: ["Content-Type", "Authorization"],
         allowMethods: ["POST", "GET", "OPTIONS"],
         exposeHeaders: ["Content-Length", "Content-Type"],
-        maxAge: 600,
         credentials: true,
     })
 );
@@ -68,7 +102,7 @@ app.get("/ai/txt2txt", async (c) => {
         throw new HTTPException(400, { message: "Missing prompt" });
     }
 
-    const openai = new OpenAI({
+    const nebius = new OpenAI({
         baseURL: "https://api.studio.nebius.ai/v1/",
         apiKey: c.env.AI_KEY,
         defaultHeaders: {
@@ -77,15 +111,22 @@ app.get("/ai/txt2txt", async (c) => {
         },
     });
 
-    // c.header("Content-Encoding", "Identity");
-    // c.header("Cache-Control", "no-cache");
-    // c.header("Connection", "keep-alive");
-    // c.header("Content-Type", "text/event-stream");
+    const moderationResult = await moderateContent(prompt, c.env.OPENAPI_KEY);
 
-    const response = await openai.completions.create({
+    if (moderationResult.error) {
+        console.error(`Moderation error for txt2txt: ${moderationResult.error}`);
+    }
+
+    if (moderationResult.flagged) {
+        return c.json({
+            response: "Your input was flagged as inappropriate by our moderation system.",
+            created_at: new Date().toISOString(),
+        });
+    }
+
+    const response = await nebius.completions.create({
         prompt: TXT_SYS_PROMPT.replace("{{prompt}}", prompt),
-        // model: "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        model: "Qwen/Qwen2.5-Coder-32B-Instruct",
+        model: "meta-llama/Llama-3.3-70B-Instruct",
         stream: false,
         max_tokens: 512,
     });
@@ -111,6 +152,7 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
     if (!prompt) {
         throw new HTTPException(400, { message: "Missing prompt" });
     }
+
     const response = await fetch("https://api.studio.nebius.ai/v1/images/generations", {
         method: "POST",
         headers: {
@@ -137,9 +179,34 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
 
     const parsed = (await response.json()) as ImageGenerationResponse;
 
-    return parsed.data?.[0]?.b64_json
-        ? c.json({ data: parsed.data[0].b64_json })
-        : c.text("No data", 404);
+    const b64 = parsed.data?.[0]?.b64_json;
+
+    if (!b64) {
+        throw new HTTPException(404, { message: "No data" });
+    }
+
+    const moderationResult = await moderateContent(
+        [
+            {
+                type: "image_url",
+                image_url: { url: `data:image/jpeg;base64,${b64}` },
+            },
+        ],
+        c.env.OPENAPI_KEY
+    );
+
+    if (moderationResult.error) {
+        console.error(`Moderation error for image: ${moderationResult.error}`);
+    }
+
+    if (moderationResult.flagged) {
+        return c.json({
+            response: "Your input was flagged as inappropriate by our moderation system.",
+            created_at: new Date().toISOString(),
+        });
+    }
+
+    return c.json({ data: b64 });
 });
 
 app.onError((err, c) => {
