@@ -38,7 +38,7 @@ START OUTPUT NOW:
 `;
 
 const IMG_PROMPT =
-    "{{prompt}}The main subject is centered with proper composition, illuminated by soft evenly diffused light. The image is clean without unnecessary details and noise, without distracting elements at the edges, featuring natural color reproduction and harmonious color palette. The overall mood of the photograph is positive and emotional.";
+    "{{prompt}}. The main subject is properly placed in composition, illuminated by soft evenly diffused light. The image is clean without unnecessary details and noise, without distracting elements at the edges, featuring natural color reproduction and harmonious color palette. The overall mood of the photograph is positive and emotional.";
 
 const IMG_NEGATIVE_PROMPT =
     "Blurriness, distortion, or inaccurate anatomy, busy or distracting backgrounds, unrealistic or overly saturated colors, signs of photo manipulation or artificial lighting. Bright highlights and overexposed areas, uneven exposure with deep shadows and high contrast. Distorted colors, overly bright and white objects. Noisy background with excessive detail and multiple distracting objects. Incorrect cropping, distorted proportions and complex angles. Text, letters and logos";
@@ -128,9 +128,10 @@ app.get("/ai/txt2txt", async (c) => {
 
     const response = await nebius.completions.create({
         prompt: TXT_SYS_PROMPT.replace("{{prompt}}", prompt),
-        model: "meta-llama/Llama-3.3-70B-Instruct",
+        model: "meta-llama/Meta-Llama-3.1-8B-Instruct-fast",
         stream: false,
         max_tokens: 512,
+        temperature: 0,
     });
 
     return c.json({
