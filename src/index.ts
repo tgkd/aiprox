@@ -4,41 +4,53 @@ import { HTTPException } from "hono/http-exception";
 import OpenAI from "openai";
 
 const TXT_SYS_PROMPT = `
-You are a text generator that must follow these exact rules:
+Create 10 meaningful and original headline and subheadline pairs for a social media banner based on the user's theme.
 
-TASK: Generate 10 text pairs in "title::description" format.
+Important:
+- Do not repeat or rephrase the user's input
+- Invent fresh, original messages that fit the theme but express new ideas
+- The tone must feel natural and suitable for any type of social media post: personal, inspirational, informational, or promotional
+- Headlines should deliver clear, engaging ideas
+- Subheadlines should add helpful context or nuance without restating the headline
 
-FORMAT RULES:
-title: always aim for 20 chars max but show last word complete if longer
-description: always aim for 50 chars max but show last word complete if longer
-separator: -----
-
-TEXT HANDLING RULES:
-- Never truncate or omit any words
+Content Rules:
+- Headline: maximum 25 characters (complete words only, never truncate)
+- Subheadline: maximum 60 characters (complete words only, never truncate)
+- No emojis, decorative punctuation, or artificial stylistic symbols
+- Use natural, concise English phrasing
 - Preserve full meaning and context
-
-INPUT CONTEXT: "{{prompt}}"
-
-REQUIREMENTS:
-- Output only the text pairs
-- No additional text or instructions
-- No bullet points or numbering
-- Each pair must relate to the input context
-- Must have exactly 10 pairs
-- Must use ----- as separator
-
-EXAMPLE OUTPUT:
-Short Title::This is a sample description about the topic
------
-Another Title::Another relevant description following the format
------
-Final Title Here::Final description that relates to the given context
-
-START OUTPUT NOW:
 `;
 
+const TXT_RESPONSE_SCHEMA = {
+    name: "text_pairs_schema",
+    strict: true,
+    schema: {
+        type: "object",
+        properties: {
+            pairs: {
+                type: "array",
+                items: {
+                    type: "object",
+                    properties: {
+                        headline: {
+                            type: "string",
+                        },
+                        subheadline: {
+                            type: "string",
+                        },
+                    },
+                    required: ["headline", "subheadline"],
+                    additionalProperties: false,
+                },
+            },
+        },
+        required: ["pairs"],
+        additionalProperties: false,
+    },
+};
+
 const IMG_PROMPT =
-    "{{prompt}}. The main subject is properly placed in composition, illuminated by soft evenly diffused light. The image is clean without unnecessary details and noise, without distracting elements at the edges, featuring natural color reproduction and harmonious color palette. The overall mood of the photograph is positive and emotional.";
+    "{{prompt}}. background-friendly image suitable for placing white text, one clear focal subject with moderate detail, wide smooth low-noise background areas, slightly darker overall tones for better contrast, soft controlled lighting, muted balanced colors, clean calm uncluttered composition, all surfaces and objects appear plain, blank and unmarked with no visible writing";
 
 const IMG_NEGATIVE_PROMPT =
     "Blurriness, distortion, or inaccurate anatomy, busy or distracting backgrounds, unrealistic or overly saturated colors, signs of photo manipulation or artificial lighting. Bright highlights and overexposed areas, uneven exposure with deep shadows and high contrast. Distorted colors, overly bright and white objects. Noisy background with excessive detail and multiple distracting objects. Incorrect cropping, distorted proportions and complex angles. Text, letters and logos";
@@ -126,16 +138,33 @@ app.get("/ai/txt2txt", async (c) => {
         );
     }
 
-    const response = await nebius.completions.create({
-        prompt: TXT_SYS_PROMPT.replace("{{prompt}}", prompt),
+    const response = await nebius.chat.completions.create({
         model: "meta-llama/Meta-Llama-3.1-8B-Instruct-fast",
         stream: false,
         max_tokens: 512,
         temperature: 0,
+        top_p: 0.9,
+        response_format: {
+            type: "json_schema",
+            json_schema: TXT_RESPONSE_SCHEMA,
+        },
+        messages: [
+            {
+                role: "system",
+                content: TXT_SYS_PROMPT.replace("{{prompt}}", prompt),
+            },
+            {
+                role: "user",
+                content: prompt,
+            },
+        ],
     });
 
+    const content = response.choices[0].message.content;
+    const parsedContent = content ? JSON.parse(content) : { pairs: [] };
+
     return c.json({
-        response: response.choices.map((c) => c.text).join(""),
+        response: parsedContent,
         created_at: response.created,
     });
 });
