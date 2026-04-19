@@ -3,4 +3,7 @@
 interface CloudflareBindings {
   AI_KEY: string;
   OPENAPI_KEY: string;
+  REPLICATE_API_TOKEN: string;
+  IMG_MODEL?: string;
+  AI: Ai;
 }

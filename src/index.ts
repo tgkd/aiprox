@@ -52,8 +52,208 @@ const TXT_RESPONSE_SCHEMA = {
 const IMG_PROMPT =
     "{{prompt}}. background-friendly image suitable for placing white text, one clear focal subject with moderate detail, wide smooth low-noise background areas, slightly darker overall tones for better contrast, soft controlled lighting, muted balanced colors, clean calm uncluttered composition, all surfaces and objects appear plain, blank and unmarked with no visible writing";
 
-const IMG_NEGATIVE_PROMPT =
-    "Blurriness, distortion, or inaccurate anatomy, busy or distracting backgrounds, unrealistic or overly saturated colors, signs of photo manipulation or artificial lighting. Bright highlights and overexposed areas, uneven exposure with deep shadows and high contrast. Distorted colors, overly bright and white objects. Noisy background with excessive detail and multiple distracting objects. Incorrect cropping, distorted proportions and complex angles. Text, letters and logos";
+type ImageModelAdapter = (
+    prompt: string,
+    width: number,
+    height: number,
+    env: CloudflareBindings
+) => Promise<string>;
+
+const FLUX_ASPECT_RATIOS: Array<[string, number]> = [
+    ["1:1", 1],
+    ["16:9", 16 / 9],
+    ["21:9", 21 / 9],
+    ["3:2", 3 / 2],
+    ["2:3", 2 / 3],
+    ["4:5", 4 / 5],
+    ["5:4", 5 / 4],
+    ["3:4", 3 / 4],
+    ["4:3", 4 / 3],
+    ["9:16", 9 / 16],
+    ["9:21", 9 / 21],
+];
+
+const NANO_BANANA_ASPECT_RATIOS: Array<[string, number]> = [
+    ["1:1", 1],
+    ["16:9", 16 / 9],
+    ["21:9", 21 / 9],
+    ["3:2", 3 / 2],
+    ["2:3", 2 / 3],
+    ["4:5", 4 / 5],
+    ["5:4", 5 / 4],
+    ["3:4", 3 / 4],
+    ["4:3", 4 / 3],
+    ["9:16", 9 / 16],
+];
+
+const RECRAFT_SIZES: Array<[string, number]> = [
+    ["1024x1024", 1],
+    ["1365x1024", 1365 / 1024],
+    ["1024x1365", 1024 / 1365],
+    ["1536x1024", 1536 / 1024],
+    ["1024x1536", 1024 / 1536],
+    ["1820x1024", 1820 / 1024],
+    ["1024x1820", 1024 / 1820],
+    ["2048x1024", 2048 / 1024],
+    ["1024x2048", 1024 / 2048],
+    ["1434x1024", 1434 / 1024],
+    ["1024x1434", 1024 / 1434],
+    ["1280x1024", 1280 / 1024],
+    ["1024x1280", 1024 / 1280],
+    ["1707x1024", 1707 / 1024],
+    ["1024x1707", 1024 / 1707],
+];
+
+function nearestAspectRatio(width: number, height: number, choices: Array<[string, number]>): string {
+    const target = width / height;
+    let best = choices[0][0];
+    let bestDiff = Infinity;
+    for (const [label, ratio] of choices) {
+        const diff = Math.abs(ratio - target);
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            best = label;
+        }
+    }
+    return best;
+}
+
+type ReplicatePrediction = {
+    id: string;
+    status: "starting" | "processing" | "succeeded" | "failed" | "canceled";
+    output: string | string[] | null;
+    error: string | null;
+};
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+    const bytes = new Uint8Array(buf);
+    const chunkSize = 0x8000;
+    const chunks: string[] = [];
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        chunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
+    }
+    return btoa(chunks.join(""));
+}
+
+async function callReplicate(
+    modelPath: string,
+    input: Record<string, unknown>,
+    token: string
+): Promise<string> {
+    const res = await fetch(`https://api.replicate.com/v1/models/${modelPath}/predictions`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Prefer: "wait",
+        },
+        body: JSON.stringify({ input }),
+    });
+
+    if (!res.ok) {
+        const body = await res.text();
+        console.error(`Replicate API error: ${res.status}`, body);
+        throw new HTTPException(502, { message: "Failed to generate image" });
+    }
+
+    const prediction = (await res.json()) as ReplicatePrediction;
+
+    if (prediction.status !== "succeeded" || !prediction.output) {
+        console.error(`Prediction ${prediction.status}:`, prediction.error);
+        throw new HTTPException(502, {
+            message: prediction.error ?? "Image generation failed",
+        });
+    }
+
+    const url = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+
+    const imgRes = await fetch(url);
+    if (!imgRes.ok) {
+        throw new HTTPException(502, { message: "Failed to fetch generated image" });
+    }
+
+    return arrayBufferToBase64(await imgRes.arrayBuffer());
+}
+
+const IMG_MODELS: Record<string, ImageModelAdapter> = {
+    "flux-schnell": (prompt, width, height, env) =>
+        callReplicate(
+            "black-forest-labs/flux-schnell",
+            {
+                prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
+                aspect_ratio: nearestAspectRatio(width, height, FLUX_ASPECT_RATIOS),
+                output_format: "jpg",
+                output_quality: 90,
+                go_fast: true,
+                num_outputs: 1,
+            },
+            env.REPLICATE_API_TOKEN
+        ),
+    "flux-dev": (prompt, width, height, env) =>
+        callReplicate(
+            "black-forest-labs/flux-dev",
+            {
+                prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
+                aspect_ratio: nearestAspectRatio(width, height, FLUX_ASPECT_RATIOS),
+                num_inference_steps: 28,
+                guidance: 3,
+                output_format: "jpg",
+                output_quality: 90,
+                go_fast: true,
+                num_outputs: 1,
+            },
+            env.REPLICATE_API_TOKEN
+        ),
+    "recraft-v3": (prompt, width, height, env) =>
+        callReplicate(
+            "recraft-ai/recraft-v3",
+            {
+                prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
+                size: nearestAspectRatio(width, height, RECRAFT_SIZES),
+                style: "any",
+            },
+            env.REPLICATE_API_TOKEN
+        ),
+    "nano-banana-2": (prompt, width, height, env) =>
+        callReplicate(
+            "google/nano-banana-2",
+            {
+                prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
+                aspect_ratio: nearestAspectRatio(width, height, NANO_BANANA_ASPECT_RATIOS),
+                resolution: "1K",
+                output_format: "jpg",
+            },
+            env.REPLICATE_API_TOKEN
+        ),
+    "cf-flux-1-schnell": async (prompt, _width, _height, env) => {
+        const result = (await env.AI.run("@cf/black-forest-labs/flux-1-schnell", {
+            prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
+            steps: 4,
+        })) as { image: string };
+        return result.image;
+    },
+    "cf-flux-2-klein-4b": async (prompt, width, height, env) => {
+        const result = (await env.AI.run("@cf/black-forest-labs/flux-2-klein-4b" as any, {
+            prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
+            width,
+            height,
+            steps: 25,
+        })) as { image: string };
+        return result.image;
+    },
+    "cf-lucid-origin": async (prompt, width, height, env) => {
+        const result = (await env.AI.run("@cf/leonardo/lucid-origin" as any, {
+            prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
+            width,
+            height,
+            steps: 25,
+            guidance: 4.5,
+        })) as { image: string };
+        return result.image;
+    },
+};
+
+const DEFAULT_IMG_MODEL = "flux-schnell";
 
 async function moderateContent(
     content: string | Array<{ type: string; [key: string]: any }>,
@@ -115,7 +315,7 @@ app.get("/ai/txt2txt", async (c) => {
     }
 
     const nebius = new OpenAI({
-        baseURL: "https://api.studio.nebius.ai/v1/",
+        baseURL: "https://api.tokenfactory.nebius.com/v1/",
         apiKey: c.env.AI_KEY,
         defaultHeaders: {
             "Content-Type": "application/json",
@@ -139,7 +339,7 @@ app.get("/ai/txt2txt", async (c) => {
     }
 
     const response = await nebius.chat.completions.create({
-        model: "meta-llama/Meta-Llama-3.1-8B-Instruct-fast",
+        model: "Qwen/Qwen3-30B-A3B-Instruct-2507",
         stream: false,
         max_tokens: 512,
         temperature: 0,
@@ -169,13 +369,6 @@ app.get("/ai/txt2txt", async (c) => {
     });
 });
 
-interface ImageGenerationResponse {
-    data: Array<{
-        b64_json: string;
-    }>;
-    id: string;
-}
-
 app.get("/ai/txt2img/:width/:height", async (c) => {
     const width = Math.min(parseInt(c.req.param("width") ?? 512), 1400);
     const height = Math.min(parseInt(c.req.param("height") ?? 512), 1400);
@@ -185,42 +378,12 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
         throw new HTTPException(400, { message: "Missing prompt" });
     }
 
-    const response = await fetch("https://api.studio.nebius.ai/v1/images/generations", {
-        method: "POST",
-        headers: {
-            accept: "*/*",
-            "content-type": "application/json",
-            authorization: `Bearer ${c.env.AI_KEY}`,
-        },
-        body: JSON.stringify({
-            model: "black-forest-labs/flux-schnell",
-            prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
-            width,
-            height,
-            seed: -1,
-            negative_prompt: IMG_NEGATIVE_PROMPT,
-            num_inference_steps: 10,
-            response_format: "b64_json",
-            response_extension: "jpg",
-        }),
-    });
-
-    if (!response.ok) {
-        return c.json(
-            {
-                error: "Failed to generate image",
-            },
-            500
-        );
+    const modelKey = c.env.IMG_MODEL ?? DEFAULT_IMG_MODEL;
+    const adapter = IMG_MODELS[modelKey];
+    if (!adapter) {
+        throw new HTTPException(500, { message: `Unknown image model: ${modelKey}` });
     }
-
-    const parsed = (await response.json()) as ImageGenerationResponse;
-
-    const b64 = parsed.data?.[0]?.b64_json;
-
-    if (!b64) {
-        throw new HTTPException(404, { message: "No data" });
-    }
+    const b64 = await adapter(prompt, width, height, c.env);
 
     const moderationResult = await moderateContent(
         [

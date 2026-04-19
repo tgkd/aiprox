@@ -3,7 +3,11 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "test:api": "node scripts/test-endpoints.mjs",
+    "test:api:txt": "node scripts/test-endpoints.mjs txt",
+    "test:api:img": "node scripts/test-endpoints.mjs img",
+    "test:api:prod": "BASE_URL=https://aiprox.smmai.workers.dev node scripts/test-endpoints.mjs"
   },
   "dependencies": {
     "hono": "^4.6.15",
