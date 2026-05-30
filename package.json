@@ -7,6 +7,7 @@
     "test:api": "node scripts/test-endpoints.mjs",
     "test:api:txt": "node scripts/test-endpoints.mjs txt",
     "test:api:img": "node scripts/test-endpoints.mjs img",
+    "test:api:layered": "node scripts/test-endpoints.mjs layered",
     "test:api:prod": "BASE_URL=https://aiprox.smmai.workers.dev node scripts/test-endpoints.mjs"
   },
   "dependencies": {

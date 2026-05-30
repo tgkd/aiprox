@@ -175,6 +175,39 @@ async function callReplicate(
     return arrayBufferToBase64(await imgRes.arrayBuffer());
 }
 
+async function callReplicateLayers(
+    modelPath: string,
+    input: Record<string, unknown>,
+    token: string
+): Promise<string[]> {
+    const res = await fetch(`https://api.replicate.com/v1/models/${modelPath}/predictions`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Prefer: "wait",
+        },
+        body: JSON.stringify({ input }),
+    });
+
+    if (!res.ok) {
+        const body = await res.text();
+        console.error(`Replicate API error: ${res.status}`, body);
+        throw new HTTPException(502, { message: "Failed to generate layers" });
+    }
+
+    const prediction = (await res.json()) as ReplicatePrediction;
+
+    if (prediction.status !== "succeeded" || !prediction.output) {
+        console.error(`Prediction ${prediction.status}:`, prediction.error);
+        throw new HTTPException(502, {
+            message: prediction.error ?? "Layer generation failed",
+        });
+    }
+
+    return Array.isArray(prediction.output) ? prediction.output : [prediction.output];
+}
+
 const IMG_MODELS: Record<string, ImageModelAdapter> = {
     "flux-schnell": (prompt, width, height, env) =>
         callReplicate(
@@ -254,6 +287,24 @@ const IMG_MODELS: Record<string, ImageModelAdapter> = {
 };
 
 const DEFAULT_IMG_MODEL = "flux-schnell";
+
+const LAYERED_MODEL = "qwen/qwen-image-layered";
+
+async function decomposeToLayers(
+    b64Image: string,
+    numLayers: number,
+    env: CloudflareBindings
+): Promise<string[]> {
+    return callReplicateLayers(
+        LAYERED_MODEL,
+        {
+            image: `data:image/jpeg;base64,${b64Image}`,
+            num_layers: numLayers,
+            output_format: "png",
+        },
+        env.REPLICATE_API_TOKEN
+    );
+}
 
 async function moderateContent(
     content: string | Array<{ type: string; [key: string]: any }>,
@@ -409,6 +460,59 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
     }
 
     return c.json({ data: b64 });
+});
+
+app.get("/ai/txt2img-layered/:width/:height", async (c) => {
+    const width = Math.min(parseInt(c.req.param("width") ?? 512), 1400);
+    const height = Math.min(parseInt(c.req.param("height") ?? 512), 1400);
+    const prompt = c.req.query("prompt");
+
+    if (!prompt) {
+        throw new HTTPException(400, { message: "Missing prompt" });
+    }
+
+    const layersParam = c.req.query("layers");
+    const layered = layersParam !== undefined;
+    const numLayers =
+        layersParam !== undefined ? Math.min(Math.max(parseInt(layersParam) || 4, 2), 8) : 0;
+
+    const modelKey = c.env.IMG_MODEL ?? DEFAULT_IMG_MODEL;
+    const adapter = IMG_MODELS[modelKey];
+    if (!adapter) {
+        throw new HTTPException(500, { message: `Unknown image model: ${modelKey}` });
+    }
+    const b64 = await adapter(prompt, width, height, c.env);
+
+    const moderationResult = await moderateContent(
+        [
+            {
+                type: "image_url",
+                image_url: { url: `data:image/jpeg;base64,${b64}` },
+            },
+        ],
+        c.env.OPENAPI_KEY
+    );
+
+    if (moderationResult.error) {
+        console.error(`Moderation error for layered image: ${moderationResult.error}`);
+    }
+
+    if (moderationResult.flagged) {
+        return c.json(
+            {
+                error: "Your input was flagged as inappropriate by our moderation system.",
+            },
+            400
+        );
+    }
+
+    if (!layered) {
+        return c.json({ data: b64 });
+    }
+
+    const layers = await decomposeToLayers(b64, numLayers, c.env);
+
+    return c.json({ layers });
 });
 
 app.onError((err, c) => {

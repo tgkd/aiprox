@@ -53,6 +53,27 @@ async function testTxt2Img() {
     console.log(`  saved ${outPath}`);
 }
 
+async function testTxt2ImgLayered() {
+    const layers = Number(process.env.LAYERS ?? 4);
+    const url = `${BASE_URL}/ai/txt2img-layered/${WIDTH}/${HEIGHT}?prompt=${encodeURIComponent(
+        PROMPT
+    )}&layers=${layers}`;
+    console.log(`\nGET ${url}`);
+    const t0 = Date.now();
+    const res = await fetch(url);
+    const ms = Date.now() - t0;
+
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !Array.isArray(body?.layers)) {
+        console.error(`  status=${res.status}  time=${ms}ms`);
+        console.error(`  unexpected response:`, body);
+        return;
+    }
+
+    console.log(`  status=${res.status}  time=${ms}ms  layers=${body.layers.length}`);
+    body.layers.forEach((u, i) => console.log(`  [${i}] ${u}`));
+}
+
 function detectExt(buf) {
     if (buf[0] === 0xff && buf[1] === 0xd8) return "jpg";
     if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "png";
@@ -64,3 +85,4 @@ const mode = process.argv[2] ?? "all";
 
 if (mode === "txt" || mode === "all") await testTxt2Txt();
 if (mode === "img" || mode === "all") await testTxt2Img();
+if (mode === "layered") await testTxt2ImgLayered();
