@@ -1,0 +1,12 @@
+# Local secrets for `wrangler dev`. Copy to `.dev.vars` (gitignored) and fill in real values.
+# NEVER put real values in this example file — it is committed. Real secrets live only in `.dev.vars`
+# locally and in `wrangler secret put <NAME>` for prod.
+
+# Shared bearer token the app sends as `Authorization: Bearer <APP_SECRET>`.
+# Generate one with: openssl rand -base64 32
+APP_SECRET="replace-me-with-a-random-secret"
+
+# Existing generation secrets (see CLAUDE.md → Bindings & secrets).
+AI_KEY="replace-me"
+OPENAPI_KEY="replace-me"
+REPLICATE_API_TOKEN="replace-me"

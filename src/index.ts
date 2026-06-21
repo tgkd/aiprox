@@ -135,6 +135,30 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
     return btoa(chunks.join(""));
 }
 
+const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled"]);
+
+/**
+ * `Prefer: wait` can return before the model finishes (status "starting"/"processing") — the
+ * dashboard logs showed repeated "Prediction starting" 502s from this. Poll the prediction to a
+ * terminal state so a slow/cold start resolves instead of erroring. Bounded (~30s) so a stuck
+ * prediction can't hang the request.
+ */
+async function waitForPrediction(
+    prediction: ReplicatePrediction,
+    token: string
+): Promise<ReplicatePrediction> {
+    let current = prediction;
+    for (let i = 0; i < 20 && !TERMINAL_STATUSES.has(current.status); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const res = await fetch(`https://api.replicate.com/v1/predictions/${current.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) break;
+        current = (await res.json()) as ReplicatePrediction;
+    }
+    return current;
+}
+
 async function callReplicate(
     modelPath: string,
     input: Record<string, unknown>,
@@ -153,15 +177,18 @@ async function callReplicate(
     if (!res.ok) {
         const body = await res.text();
         console.error(`Replicate API error: ${res.status}`, body);
-        throw new HTTPException(502, { message: "Failed to generate image" });
+        throw new HTTPException(502, { message: `Replicate error ${res.status}` });
     }
 
-    const prediction = (await res.json()) as ReplicatePrediction;
+    let prediction = (await res.json()) as ReplicatePrediction;
+    if (!TERMINAL_STATUSES.has(prediction.status)) {
+        prediction = await waitForPrediction(prediction, token);
+    }
 
     if (prediction.status !== "succeeded" || !prediction.output) {
         console.error(`Prediction ${prediction.status}:`, prediction.error);
         throw new HTTPException(502, {
-            message: prediction.error ?? "Image generation failed",
+            message: prediction.error ?? `Image generation ${prediction.status} (no output)`,
         });
     }
 
@@ -196,12 +223,15 @@ async function callReplicateLayers(
         throw new HTTPException(502, { message: "Failed to generate layers" });
     }
 
-    const prediction = (await res.json()) as ReplicatePrediction;
+    let prediction = (await res.json()) as ReplicatePrediction;
+    if (!TERMINAL_STATUSES.has(prediction.status)) {
+        prediction = await waitForPrediction(prediction, token);
+    }
 
     if (prediction.status !== "succeeded" || !prediction.output) {
         console.error(`Prediction ${prediction.status}:`, prediction.error);
         throw new HTTPException(502, {
-            message: prediction.error ?? "Layer generation failed",
+            message: prediction.error ?? `Layer generation ${prediction.status} (no output)`,
         });
     }
 
@@ -345,6 +375,20 @@ async function moderateContent(
     }
 }
 
+/**
+ * Constant-time string compare so a wrong bearer token can't be guessed byte-by-byte via response
+ * timing. Length is allowed to leak (cheap, and the secret length isn't sensitive).
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+    const enc = new TextEncoder();
+    const ab = enc.encode(a);
+    const bb = enc.encode(b);
+    if (ab.length !== bb.length) return false;
+    let diff = 0;
+    for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
+    return diff === 0;
+}
+
 const app = new Hono<{ Bindings: CloudflareBindings }>();
 
 app.use(
@@ -357,6 +401,46 @@ app.use(
         credentials: true,
     })
 );
+
+/**
+ * Gate `/ai/*` behind a shared bearer secret plus a per-IP rate limit.
+ *
+ * CORS does NOT protect this proxy: it's browser-only, so native apps (URLSession), curl, and scripts
+ * ignore it entirely — the endpoints were effectively open to the public internet while proxying paid
+ * APIs. This gate closes that.
+ *
+ * `APP_SECRET` is a LOW-STRENGTH speed bump: the app ships the secret in its binary, so it can be
+ * extracted (`strings`, a TLS-intercepting proxy). It blocks the open URL and casual/scripted abuse,
+ * but is NOT real client authentication — for "this is my unmodified app" proof, move to Apple App
+ * Attest. The per-IP `RATE_LIMITER` is the real backstop: it bounds the bill even if the secret leaks.
+ *
+ * Runs after the cors middleware so browser preflight (OPTIONS, which carries no Authorization header)
+ * is answered there and never reaches this gate.
+ */
+app.use("/ai/*", async (c, next) => {
+    if (c.req.method === "OPTIONS") return next();
+
+    const expected = c.env.APP_SECRET;
+    if (!expected) {
+        // Fail closed: a missing secret must not silently leave the proxy open.
+        console.error("APP_SECRET is not configured");
+        throw new HTTPException(500, { message: "Auth not configured" });
+    }
+
+    const header = c.req.header("Authorization") ?? "";
+    const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+    if (!timingSafeEqual(token, expected)) {
+        throw new HTTPException(401, { message: "Unauthorized" });
+    }
+
+    const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+    const { success } = await c.env.RATE_LIMITER.limit({ key: ip });
+    if (!success) {
+        throw new HTTPException(429, { message: "Too many requests. Please wait and try again." });
+    }
+
+    return next();
+});
 
 app.get("/ai/txt2txt", async (c) => {
     const prompt = c.req.query("prompt");
@@ -516,6 +600,12 @@ app.get("/ai/txt2img-layered/:width/:height", async (c) => {
 });
 
 app.onError((err, c) => {
+    // Preserve intentional HTTP errors (401/429 from the auth gate, 400/502 from handlers) instead of
+    // masking them all as 500 — a custom onError replaces Hono's default HTTPException rendering, so we
+    // must call getResponse() ourselves.
+    if (err instanceof HTTPException) {
+        return err.getResponse();
+    }
     console.error(err);
     return c.text("Internal Server Error", 500);
 });

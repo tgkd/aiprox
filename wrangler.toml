@@ -112,5 +112,18 @@ binding = "AI"
 # binding = "MY_INDEX"
 # index_name = "my-index"
 
+# Per-IP rate limit for the /ai/* proxy — defense in depth behind APP_SECRET (bounds the bill even if
+# the bearer secret leaks). 20 requests per 60s per client IP. `namespace_id` is an arbitrary stable
+# id for this limiter; `period` must be 10 or 60.
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
+
+# Secret (NOT stored here): APP_SECRET — the shared bearer token the app sends as
+# `Authorization: Bearer <APP_SECRET>`. Set in prod with `wrangler secret put APP_SECRET`; for local
+# `wrangler dev`, put it in a gitignored `.dev.vars` (see `.dev.vars.example`).
+
 [limits]
 cpu_ms = 10000
