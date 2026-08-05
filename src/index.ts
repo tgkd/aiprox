@@ -135,6 +135,24 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
     return btoa(chunks.join(""));
 }
 
+/**
+ * All Replicate API calls go through the Cloudflare AI Gateway. The Worker holds no Replicate
+ * key: the gateway injects the stored provider key (BYOK) at the edge. Auth must be the
+ * `cf-aig-authorization` header — a plain `Authorization` header would be forwarded to the
+ * provider verbatim and take precedence over the stored key, silently un-migrating the call.
+ */
+function gatewayBase(env: CloudflareBindings): string {
+    return `https://gateway.ai.cloudflare.com/v1/${env.AI_GATEWAY_ACCOUNT_ID}/${env.AI_GATEWAY_ID}`;
+}
+
+/** The gateway is authenticated — without a token every image route fails, so fail loudly. */
+function gatewayHeaders(env: CloudflareBindings): Record<string, string> {
+    if (!env.AI_GATEWAY_TOKEN) {
+        throw new HTTPException(500, { message: "AI_GATEWAY_TOKEN is not configured" });
+    }
+    return { "cf-aig-authorization": `Bearer ${env.AI_GATEWAY_TOKEN}` };
+}
+
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled"]);
 
 /**
@@ -145,13 +163,13 @@ const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled"]);
  */
 async function waitForPrediction(
     prediction: ReplicatePrediction,
-    token: string
+    env: CloudflareBindings
 ): Promise<ReplicatePrediction> {
     let current = prediction;
     for (let i = 0; i < 20 && !TERMINAL_STATUSES.has(current.status); i++) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        const res = await fetch(`https://api.replicate.com/v1/predictions/${current.id}`, {
-            headers: { Authorization: `Bearer ${token}` },
+        const res = await fetch(`${gatewayBase(env)}/replicate/predictions/${current.id}`, {
+            headers: gatewayHeaders(env),
         });
         if (!res.ok) break;
         current = (await res.json()) as ReplicatePrediction;
@@ -162,12 +180,12 @@ async function waitForPrediction(
 async function callReplicate(
     modelPath: string,
     input: Record<string, unknown>,
-    token: string
+    env: CloudflareBindings
 ): Promise<string> {
-    const res = await fetch(`https://api.replicate.com/v1/models/${modelPath}/predictions`, {
+    const res = await fetch(`${gatewayBase(env)}/replicate/models/${modelPath}/predictions`, {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${token}`,
+            ...gatewayHeaders(env),
             "Content-Type": "application/json",
             Prefer: "wait",
         },
@@ -182,7 +200,7 @@ async function callReplicate(
 
     let prediction = (await res.json()) as ReplicatePrediction;
     if (!TERMINAL_STATUSES.has(prediction.status)) {
-        prediction = await waitForPrediction(prediction, token);
+        prediction = await waitForPrediction(prediction, env);
     }
 
     if (prediction.status !== "succeeded" || !prediction.output) {
@@ -194,6 +212,7 @@ async function callReplicate(
 
     const url = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
 
+    // The output URL is the replicate.delivery CDN, not the Replicate API — no auth, stays direct.
     const imgRes = await fetch(url);
     if (!imgRes.ok) {
         throw new HTTPException(502, { message: "Failed to fetch generated image" });
@@ -205,12 +224,12 @@ async function callReplicate(
 async function callReplicateLayers(
     modelPath: string,
     input: Record<string, unknown>,
-    token: string
+    env: CloudflareBindings
 ): Promise<string[]> {
-    const res = await fetch(`https://api.replicate.com/v1/models/${modelPath}/predictions`, {
+    const res = await fetch(`${gatewayBase(env)}/replicate/models/${modelPath}/predictions`, {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${token}`,
+            ...gatewayHeaders(env),
             "Content-Type": "application/json",
             Prefer: "wait",
         },
@@ -225,7 +244,7 @@ async function callReplicateLayers(
 
     let prediction = (await res.json()) as ReplicatePrediction;
     if (!TERMINAL_STATUSES.has(prediction.status)) {
-        prediction = await waitForPrediction(prediction, token);
+        prediction = await waitForPrediction(prediction, env);
     }
 
     if (prediction.status !== "succeeded" || !prediction.output) {
@@ -250,7 +269,7 @@ const IMG_MODELS: Record<string, ImageModelAdapter> = {
                 go_fast: true,
                 num_outputs: 1,
             },
-            env.REPLICATE_API_TOKEN
+            env
         ),
     "flux-dev": (prompt, width, height, env) =>
         callReplicate(
@@ -265,7 +284,7 @@ const IMG_MODELS: Record<string, ImageModelAdapter> = {
                 go_fast: true,
                 num_outputs: 1,
             },
-            env.REPLICATE_API_TOKEN
+            env
         ),
     "recraft-v3": (prompt, width, height, env) =>
         callReplicate(
@@ -275,7 +294,7 @@ const IMG_MODELS: Record<string, ImageModelAdapter> = {
                 size: nearestAspectRatio(width, height, RECRAFT_SIZES),
                 style: "any",
             },
-            env.REPLICATE_API_TOKEN
+            env
         ),
     "nano-banana-2": (prompt, width, height, env) =>
         callReplicate(
@@ -286,34 +305,8 @@ const IMG_MODELS: Record<string, ImageModelAdapter> = {
                 resolution: "1K",
                 output_format: "jpg",
             },
-            env.REPLICATE_API_TOKEN
+            env
         ),
-    "cf-flux-1-schnell": async (prompt, _width, _height, env) => {
-        const result = (await env.AI.run("@cf/black-forest-labs/flux-1-schnell", {
-            prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
-            steps: 4,
-        })) as { image: string };
-        return result.image;
-    },
-    "cf-flux-2-klein-4b": async (prompt, width, height, env) => {
-        const result = (await env.AI.run("@cf/black-forest-labs/flux-2-klein-4b" as any, {
-            prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
-            width,
-            height,
-            steps: 25,
-        })) as { image: string };
-        return result.image;
-    },
-    "cf-lucid-origin": async (prompt, width, height, env) => {
-        const result = (await env.AI.run("@cf/leonardo/lucid-origin" as any, {
-            prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
-            width,
-            height,
-            steps: 25,
-            guidance: 4.5,
-        })) as { image: string };
-        return result.image;
-    },
 };
 
 const DEFAULT_IMG_MODEL = "flux-schnell";
@@ -325,54 +318,11 @@ async function decomposeToLayers(
     numLayers: number,
     env: CloudflareBindings
 ): Promise<string[]> {
-    return callReplicateLayers(
-        LAYERED_MODEL,
-        {
-            image: `data:image/jpeg;base64,${b64Image}`,
-            num_layers: numLayers,
-            output_format: "png",
-        },
-        env.REPLICATE_API_TOKEN
-    );
-}
-
-async function moderateContent(
-    content: string | Array<{ type: string; [key: string]: any }>,
-    apiKey: string
-): Promise<{ flagged: boolean; error?: string }> {
-    try {
-        const response = await fetch("https://api.openai.com/v1/moderations", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-                input: content,
-                model: "omni-moderation-latest",
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`Moderation API error: ${response.status}`, errorText);
-            return {
-                flagged: false,
-                error: `Moderation API error ${response.status}: ${errorText}`,
-            };
-        }
-
-        const result = await response.json<OpenAI.Moderations.ModerationCreateResponse>();
-        const flagged = result.results?.some((r: any) => r.flagged) || false;
-
-        return { flagged };
-    } catch (error) {
-        console.error("Moderation error:", error);
-        return {
-            flagged: false,
-            error: "Unknown moderation error",
-        };
-    }
+    return callReplicateLayers(LAYERED_MODEL, {
+        image: `data:image/jpeg;base64,${b64Image}`,
+        num_layers: numLayers,
+        output_format: "png",
+    }, env);
 }
 
 /**
@@ -449,6 +399,7 @@ app.get("/ai/txt2txt", async (c) => {
         throw new HTTPException(400, { message: "Missing prompt" });
     }
 
+    // Nebius Token Factory is not an AI Gateway provider, so this stays a direct call on AI_KEY.
     const nebius = new OpenAI({
         baseURL: "https://api.tokenfactory.nebius.com/v1/",
         apiKey: c.env.AI_KEY,
@@ -457,21 +408,6 @@ app.get("/ai/txt2txt", async (c) => {
             Accept: "*/*",
         },
     });
-
-    const moderationResult = await moderateContent(prompt, c.env.OPENAPI_KEY);
-
-    if (moderationResult.error) {
-        console.error(`Moderation error for txt2txt: ${moderationResult.error}`);
-    }
-
-    if (moderationResult.flagged) {
-        return c.json(
-            {
-                error: "Your input was flagged as inappropriate by our moderation system.",
-            },
-            400
-        );
-    }
 
     const response = await nebius.chat.completions.create({
         model: "Qwen/Qwen3-30B-A3B-Instruct-2507",
@@ -520,29 +456,6 @@ app.get("/ai/txt2img/:width/:height", async (c) => {
     }
     const b64 = await adapter(prompt, width, height, c.env);
 
-    const moderationResult = await moderateContent(
-        [
-            {
-                type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${b64}` },
-            },
-        ],
-        c.env.OPENAPI_KEY
-    );
-
-    if (moderationResult.error) {
-        console.error(`Moderation error for image: ${moderationResult.error}`);
-    }
-
-    if (moderationResult.flagged) {
-        return c.json(
-            {
-                error: "Your input was flagged as inappropriate by our moderation system.",
-            },
-            400
-        );
-    }
-
     return c.json({ data: b64 });
 });
 
@@ -566,29 +479,6 @@ app.get("/ai/txt2img-layered/:width/:height", async (c) => {
         throw new HTTPException(500, { message: `Unknown image model: ${modelKey}` });
     }
     const b64 = await adapter(prompt, width, height, c.env);
-
-    const moderationResult = await moderateContent(
-        [
-            {
-                type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${b64}` },
-            },
-        ],
-        c.env.OPENAPI_KEY
-    );
-
-    if (moderationResult.error) {
-        console.error(`Moderation error for layered image: ${moderationResult.error}`);
-    }
-
-    if (moderationResult.flagged) {
-        return c.json(
-            {
-                error: "Your input was flagged as inappropriate by our moderation system.",
-            },
-            400
-        );
-    }
 
     if (!layered) {
         return c.json({ data: b64 });

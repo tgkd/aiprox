@@ -6,7 +6,9 @@
 # Generate one with: openssl rand -base64 32
 APP_SECRET="replace-me-with-a-random-secret"
 
-# Existing generation secrets (see CLAUDE.md → Bindings & secrets).
+# Nebius Token Factory key for /ai/txt2txt (see CLAUDE.md → Bindings & secrets).
 AI_KEY="replace-me"
-OPENAPI_KEY="replace-me"
-REPLICATE_API_TOKEN="replace-me"
+
+# Cloudflare AI-Gateway token (Run permission). All Replicate calls go through the gateway;
+# the Replicate provider key itself is stored on the gateway's Provider Keys page, not here.
+AI_GATEWAY_TOKEN="replace-me"

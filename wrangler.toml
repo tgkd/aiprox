@@ -23,11 +23,11 @@ enabled = true
 # - https://developers.cloudflare.com/workers/configuration/secrets/
 [vars]
 IMG_MODEL = "flux-dev"
-
-# Bind the Workers AI model catalog. Run machine learning models, powered by serverless GPUs, on Cloudflare’s global network
-# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#workers-ai
-[ai]
-binding = "AI"
+# The AI Gateway all Replicate calls go through. Auth: secret AI_GATEWAY_TOKEN (a Cloudflare
+# AI-Gateway token with Run permission); the Replicate provider key is stored on the gateway's
+# Provider Keys page and injected at the edge — this Worker holds no Replicate credential.
+AI_GATEWAY_ACCOUNT_ID = "375e4092bc7903fb8ef13e363a41d370"
+AI_GATEWAY_ID = "default"
 
 # Bind an Analytics Engine dataset. Use Analytics Engine to write analytics within your Pages Function.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#analytics-engine-datasets
@@ -121,9 +121,11 @@ type = "ratelimit"
 namespace_id = "1001"
 simple = { limit = 20, period = 60 }
 
-# Secret (NOT stored here): APP_SECRET — the shared bearer token the app sends as
-# `Authorization: Bearer <APP_SECRET>`. Set in prod with `wrangler secret put APP_SECRET`; for local
-# `wrangler dev`, put it in a gitignored `.dev.vars` (see `.dev.vars.example`).
+# Secrets (NOT stored here): APP_SECRET — the shared bearer token the app sends as
+# `Authorization: Bearer <APP_SECRET>`; AI_KEY — Nebius Token Factory key for /ai/txt2txt;
+# AI_GATEWAY_TOKEN — Cloudflare AI-Gateway token for the Replicate routes. Set in prod with
+# `wrangler secret put <NAME>`; for local `wrangler dev`, put them in a gitignored `.dev.vars`
+# (see `.dev.vars.example`).
 
 [limits]
 cpu_ms = 10000

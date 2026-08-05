@@ -8,11 +8,18 @@ const PROMPT = process.env.PROMPT ?? "A serene mountain landscape at sunrise wit
 const WIDTH = Number(process.env.WIDTH ?? 1024);
 const HEIGHT = Number(process.env.HEIGHT ?? 1024);
 
+// The worker gates /ai/* behind `Authorization: Bearer <APP_SECRET>`; without it every call is 401.
+const APP_SECRET = process.env.APP_SECRET ?? "";
+const HEADERS = APP_SECRET ? { Authorization: `Bearer ${APP_SECRET}` } : {};
+if (!APP_SECRET) {
+    console.warn("APP_SECRET not set — requests will be rejected with 401 by the auth gate");
+}
+
 async function testTxt2Txt() {
     const url = `${BASE_URL}/ai/txt2txt?prompt=${encodeURIComponent(PROMPT)}`;
     console.log(`\nGET ${url}`);
     const t0 = Date.now();
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: HEADERS });
     const ms = Date.now() - t0;
 
     const body = await res.json().catch(() => null);
@@ -24,7 +31,7 @@ async function testTxt2Img() {
     const url = `${BASE_URL}/ai/txt2img/${WIDTH}/${HEIGHT}?prompt=${encodeURIComponent(PROMPT)}`;
     console.log(`\nGET ${url}`);
     const t0 = Date.now();
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: HEADERS });
     const ms = Date.now() - t0;
 
     if (!res.ok) {
@@ -60,7 +67,7 @@ async function testTxt2ImgLayered() {
     )}&layers=${layers}`;
     console.log(`\nGET ${url}`);
     const t0 = Date.now();
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: HEADERS });
     const ms = Date.now() - t0;
 
     const body = await res.json().catch(() => null);
