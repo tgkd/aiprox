@@ -22,7 +22,7 @@ enabled = true
 # Note: Use secrets to store sensitive data.
 # - https://developers.cloudflare.com/workers/configuration/secrets/
 [vars]
-IMG_MODEL = "flux-dev"
+IMG_MODEL = "grok-imagine-image"
 # The AI Gateway all Replicate calls go through. Auth: secret AI_GATEWAY_TOKEN (a Cloudflare
 # AI-Gateway token with Run permission); the Replicate provider key is stored on the gateway's
 # Provider Keys page and injected at the edge — this Worker holds no Replicate credential.
@@ -126,6 +126,3 @@ simple = { limit = 20, period = 60 }
 # AI_GATEWAY_TOKEN — Cloudflare AI-Gateway token for the Replicate routes. Set in prod with
 # `wrangler secret put <NAME>`; for local `wrangler dev`, put them in a gitignored `.dev.vars`
 # (see `.dev.vars.example`).
-
-[limits]
-cpu_ms = 10000

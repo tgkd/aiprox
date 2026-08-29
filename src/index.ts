@@ -50,7 +50,7 @@ const TXT_RESPONSE_SCHEMA = {
 };
 
 const IMG_PROMPT =
-    "{{prompt}}. background-friendly image suitable for placing white text, one clear focal subject with moderate detail, wide smooth low-noise background areas, slightly darker overall tones for better contrast, soft controlled lighting, muted balanced colors, clean calm uncluttered composition, all surfaces and objects appear plain, blank and unmarked with no visible writing";
+    "{{prompt}}. one clear focal subject with moderate detail, wide smooth low-noise open areas, generous empty negative space in the upper half, slightly darker overall tones for stronger contrast, soft controlled lighting, muted balanced colors, clean calm uncluttered composition, plain untouched surfaces, smooth unbroken materials";
 
 type ImageModelAdapter = (
     prompt: string,
@@ -71,6 +71,22 @@ const FLUX_ASPECT_RATIOS: Array<[string, number]> = [
     ["4:3", 4 / 3],
     ["9:16", 9 / 16],
     ["9:21", 9 / 21],
+];
+
+const GROK_ASPECT_RATIOS: Array<[string, number]> = [
+    ["1:1", 1],
+    ["16:9", 16 / 9],
+    ["9:16", 9 / 16],
+    ["4:3", 4 / 3],
+    ["3:4", 3 / 4],
+    ["3:2", 3 / 2],
+    ["2:3", 2 / 3],
+    ["2:1", 2],
+    ["1:2", 1 / 2],
+    ["19.5:9", 19.5 / 9],
+    ["9:19.5", 9 / 19.5],
+    ["20:9", 20 / 9],
+    ["9:20", 9 / 20],
 ];
 
 const NANO_BANANA_ASPECT_RATIOS: Array<[string, number]> = [
@@ -293,6 +309,15 @@ const IMG_MODELS: Record<string, ImageModelAdapter> = {
                 prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
                 size: nearestAspectRatio(width, height, RECRAFT_SIZES),
                 style: "any",
+            },
+            env
+        ),
+    "grok-imagine-image": (prompt, width, height, env) =>
+        callReplicate(
+            "xai/grok-imagine-image",
+            {
+                prompt: IMG_PROMPT.replace("{{prompt}}", prompt),
+                aspect_ratio: nearestAspectRatio(width, height, GROK_ASPECT_RATIOS),
             },
             env
         ),
