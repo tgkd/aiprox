@@ -49,6 +49,8 @@ const TXT_RESPONSE_SCHEMA = {
     },
 };
 
+const REASONING_OFF = "none" as unknown as OpenAI.ReasoningEffort;
+
 const IMG_PROMPT =
     "{{prompt}}. one clear focal subject with moderate detail, wide smooth low-noise open areas, generous empty negative space in the upper half, slightly darker overall tones for stronger contrast, soft controlled lighting, muted balanced colors, clean calm uncluttered composition, plain untouched surfaces, smooth unbroken materials";
 
@@ -435,11 +437,12 @@ app.get("/ai/txt2txt", async (c) => {
     });
 
     const response = await nebius.chat.completions.create({
-        model: "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        model: "deepseek-ai/DeepSeek-V4-Flash-0731",
         stream: false,
         max_tokens: 512,
         temperature: 0,
         top_p: 0.9,
+        reasoning_effort: REASONING_OFF,
         response_format: {
             type: "json_schema",
             json_schema: TXT_RESPONSE_SCHEMA,

@@ -63,9 +63,15 @@ stored key, silently un-migrating the call while everything appears to work.
 ## Architecture
 
 **`GET /ai/txt2txt?prompt=`** — Calls Nebius directly (OpenAI-compatible SDK pointed at
-`api.tokenfactory.nebius.com`) with `Qwen/Qwen3-30B-A3B-Instruct-2507`, `stream:false`,
-forcing a strict `json_schema` response (`TXT_RESPONSE_SCHEMA`) of 10 headline/subheadline
-pairs. Returns `{ response, created_at }`.
+`api.tokenfactory.nebius.com`), `stream:false`, forcing a strict `json_schema` response
+(`TXT_RESPONSE_SCHEMA`) of 10 headline/subheadline pairs. Returns `{ response, created_at }`.
+
+Most current Nebius chat models are reasoning models. Left on, reasoning consumes the whole
+`max_tokens` budget before any JSON is written: the call still returns 200, but with
+`finish_reason: "length"` and truncated content, so `JSON.parse` throws and the route 500s.
+`reasoning_effort: "none"` is the one switch that turns it off across the DeepSeek, GLM,
+Nemotron and Qwen3.5 families on Nebius; `chat_template_kwargs` flags work only per family.
+The SDK's `ReasoningEffort` type predates `"none"`, hence the `REASONING_OFF` cast.
 
 **`GET /ai/txt2img/:width/:height?prompt=`** — Resolves the adapter named by `IMG_MODEL` and
 returns the generated image as `{ data: <base64> }`. Width/height are clamped to ≤1400.
